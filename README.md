@@ -23,7 +23,7 @@ The plugin provides the following features:
 * Create new story files from a configurable story template
 * Comment/uncomment lines in story files
 * Code inspections to report unused steps definitions and undefined step usages
-* Run *.story files
+* Run *.story files (DEFECT)
 
 Known limitations
 -----------------
