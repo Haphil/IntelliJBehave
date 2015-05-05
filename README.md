@@ -12,6 +12,7 @@ Most of the original code has been retained, but several improvements have been 
 * https://github.com/jarosite
 * https://github.com/Arnauld
 * https://github.com/harley84
+* https://github.com/debritod
     
 Features
 --------
