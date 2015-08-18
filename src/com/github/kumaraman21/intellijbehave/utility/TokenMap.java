@@ -1,127 +1,161 @@
 package com.github.kumaraman21.intellijbehave.utility;
 
-import com.github.kumaraman21.intellijbehave.service.JavaStepDefinition;
-import com.intellij.codeInsight.completion.CompletionUtilCore;
-
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Created by DeBritoD on 27.03.2015.
  */
-public class TokenMap {
-    private final Map<String, TokenMap> nextTokens = new HashMap<String, TokenMap>();
-    private JavaStepDefinition leafToken;// = new ArrayList<JavaStepDefinition>();
-    private static final Pattern pattern = Pattern.compile("((\\w|<|>|\\|)+|[\\W&&[^\\s]])", Pattern.DOTALL);
+public class TokenMap<V> {
+    private final String key;
+    private final Map<String, TokenMap<V>> nextTokens = new HashMap<String, TokenMap<V>>();
+    private V leafToken;
+    private static final Pattern PutTokenizer = Pattern.compile("(\\S+)", Pattern.DOTALL);
+    private static final Pattern GetTokenizer = Pattern.compile("(\\S+)", Pattern.DOTALL);
 
-    private static List<String> split(final String text) {
-        final Matcher matcher = pattern.matcher(text);
-
-        List<String> result2 = new ArrayList<String>();
-        while (matcher.find()) {
-            int start = matcher.start();
-            int end = matcher.end();
-            result2.add(text.substring(start, end));
-        }
-        return result2;
+    public TokenMap() {
+        key = "";
     }
 
-    public void put(final JavaStepDefinition def) {
-        final Set<ParametrizedString> parametrizedStrings = def.toPString();
-        for (ParametrizedString parametrizedString : parametrizedStrings) {
-            final String stringWithoutIdentifiers = parametrizedString.toStringWithoutIdentifiers();
-            final List<String> split =
-                    split(String.format("%s %s", def.getAnnotationTypeAsString(), stringWithoutIdentifiers));
-            put(split, 0, def);
+    public TokenMap(String key) {
+        this.key = key;
+    }
+
+    protected V getLeafToken() {
+        return leafToken;
+    }
+
+    protected Map<String, TokenMap<V>> getNextTokens() {
+        return nextTokens;
+    }
+
+    public void put(final V value, final Collection<String> paths) {
+        for (final String path : paths) {
+            put(new TokenIterator(path, PutTokenizer), value);
         }
     }
 
-    private void put(final List<String> split, final int count, final JavaStepDefinition def) {
-        if (count < split.size()) {
-            String token = split.get(count);
-            TokenMap tokenMap = nextTokens.get(token);
+    public void put(final V value, final String... paths) {
+        for (final String path : paths) {
+            put(new TokenIterator(path, PutTokenizer), value);
+        }
+    }
+
+    public List<V> get(final String toFind, final boolean strict) {
+        List<String> tokens = new ArrayList<String>();
+
+        TokenIterator tokenIterator = new TokenIterator(toFind, GetTokenizer);
+        while (tokenIterator.hasNext()) {
+            tokens.add(tokenIterator.next());
+        }
+        return get(tokens, 0, strict);
+    }
+
+    public boolean isEmpty() {
+        return nextTokens.isEmpty() && leafToken == null;
+    }
+
+    private String reduceIfParameter(final String token) {
+        final char firstChar = token.charAt(0);
+        if (firstChar == '$' || firstChar == '<' && token.charAt(token.length() - 1) == '>') {
+            return "$";
+        }
+        return token;
+    }
+
+    private void put(final Iterator<String> path, final V value) {
+        if (path.hasNext()) {
+            final String token = reduceIfParameter(path.next());
+            TokenMap<V> tokenMap = nextTokens.get(token);
             if (tokenMap == null) {
-                tokenMap = new TokenMap();
+                tokenMap = token.equals("$") ? new TokenMapParam<V>() : new TokenMap<V>();
                 nextTokens.put(token, tokenMap);
             }
-            tokenMap.put(split, count + 1, def);
+            tokenMap.put(path, value);
         } else {
-            leafToken = def;
+            leafToken = value;
         }
     }
 
-    public List<JavaStepDefinition> getConcerned(String toFind, boolean strict) {
-        String reallyFind = toFind;
-        int rulezzz = reallyFind.indexOf(CompletionUtilCore.DUMMY_IDENTIFIER_TRIMMED);
-        if (rulezzz >= 0) {
-            reallyFind = reallyFind.substring(0, rulezzz);
-        }
-        List<String> split = split(reallyFind);
-        return getConcerned(split, 0, strict);
-    }
-
-    private String unwrapInject(String maybeInject) {
-        if (maybeInject.startsWith("<") && maybeInject.endsWith(">")) {
-            int start = maybeInject.indexOf("|") + 1;
-            int end = maybeInject.indexOf(">", start);
-            return maybeInject.substring(start, end);
-        }
-        return maybeInject;
-    }
-
-    private List<JavaStepDefinition> getConcerned(List<String> split, int count, boolean strict) {
-        int it = count;
-        while (it < split.size()) {
-            String next = split.get(it);
-            TokenMap tokenMap = nextTokens.get(next);
-            if (tokenMap == null) {
-                //maybe it's a user inject
-                String tryToken = unwrapInject(next);
-                tokenMap = nextTokens.get(tryToken);
+    protected String unwrapInject(final String value) {
+        int start = value.indexOf('<');
+        if (start < 0) return value;
+        final StringBuilder sb = new StringBuilder();
+        String newValue = value;
+        while (start >= 0) {
+            final boolean doubleStart = newValue.charAt(start + 1) == '<';
+            final int end = newValue.indexOf('>', start);
+            int secondEnd = end;
+            if (end + 1 < newValue.length() && newValue.charAt(end + 1) == '>' && doubleStart) ++secondEnd;
+            if (end >= 0) {
+                final int pipe = newValue.indexOf("|", start + 1);
+                if (pipe >= 0) {
+                    sb.append(newValue.substring(0, start));
+                    sb.append(newValue.substring(pipe + 1, end));
+                    newValue = newValue.substring(secondEnd + 1, newValue.length());
+                    start = newValue.indexOf('<');
+                } else {
+                    start = newValue.indexOf('<', start + 1);
+                }
+            } else {
+                break;
             }
+        }
+        sb.append(newValue);
+        return sb.toString();
+    }
+
+    protected List<V> get(final List<String> split, final int count, final boolean strict) {
+        if ((strict && count < split.size()) || (!strict && count < split.size() - 1)) {
+            TokenMap<V> tokenMap;
+            final String next = unwrapInject(split.get(count));
+            tokenMap = getNextTokens().get("$");
             if (tokenMap != null) {
-                List<JavaStepDefinition> concerned = tokenMap.getConcerned(split, it + 1, strict);
+                final List<V> concerned = tokenMap.get(split, count + 1, strict);
                 if (!concerned.isEmpty()) {
                     return concerned;
                 }
             }
-            if (!strict && it + 1 == split.size()) {
-                List<JavaStepDefinition> result = new ArrayList<JavaStepDefinition>();
-                for (Map.Entry<String, TokenMap> entry : nextTokens.entrySet()) {
-                    if (entry.getKey().startsWith(next)) {
-                        result.addAll(entry.getValue().getAll());
-                    }
+            tokenMap = getNextTokens().get(next);
+            if (tokenMap != null) {
+                return tokenMap.get(split, count + 1, strict);
+            } else {
+                if (!strict) {
+                    tokenMap = getNextTokens().get("$");
+                    return tokenMap.getAll();
                 }
-                //maybe the last is a parameter
-                if (result.isEmpty()) {
-                    result.addAll(getAll());
-                }
-                return result;
-
+                return Collections.emptyList();
             }
-            ++it;
         }
-        //The rest of the input could be a parameter. This will be solved in ParametrizedString.
-        if (it >= split.size() && strict && leafToken != null) {
+
+        if (!strict && count == split.size() - 1) {
+            final List<V> result = new ArrayList<V>();
+            String prefix = unwrapInject(split.get(count));
+            for (final Map.Entry<String, TokenMap<V>> entry : getNextTokens().entrySet()) {
+                final String key = entry.getKey();
+                if (key.equals("$") || key.startsWith(prefix)) {
+                    result.addAll(entry.getValue().getAll());
+                }
+            }
+            return result;
+        }
+        final V leafToken = getLeafToken();
+        if (count >= split.size() && strict && leafToken != null) {
             return Collections.singletonList(leafToken);
         }
 
         return Collections.emptyList();
     }
 
-    private List<JavaStepDefinition> getAll() {
-        final List<JavaStepDefinition> result = new ArrayList<JavaStepDefinition>();
+    protected List<V> getAll() {
+        final List<V> result = new ArrayList<V>();
         if (leafToken != null) {
             result.add(leafToken);
         }
-        for (TokenMap tokenMap : nextTokens.values()) {
+        for (TokenMap<V> tokenMap : nextTokens.values()) {
             result.addAll(tokenMap.getAll());
         }
         return result;
     }
 
-    public boolean isEmpty() {
-        return nextTokens.isEmpty() && leafToken == null;
-    }
 }

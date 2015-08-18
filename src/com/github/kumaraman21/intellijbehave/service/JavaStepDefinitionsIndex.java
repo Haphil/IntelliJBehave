@@ -3,6 +3,7 @@ package com.github.kumaraman21.intellijbehave.service;
 import com.github.kumaraman21.intellijbehave.parser.ScenarioStep;
 import com.github.kumaraman21.intellijbehave.psi.JBehaveStepLine;
 import com.github.kumaraman21.intellijbehave.utility.TokenMap;
+import com.intellij.codeInsight.completion.CompletionUtilCore;
 import com.intellij.lang.Language;
 import com.intellij.lang.java.JavaLanguage;
 import com.intellij.openapi.application.ApplicationManager;
@@ -28,7 +29,8 @@ import static java.util.Arrays.asList;
 
 public class JavaStepDefinitionsIndex {
     private final PsiManager manager;
-    private final Map<Module, TokenMap> tokenMaps = new HashMap<Module, TokenMap>();
+    private final Map<Module, TokenMap<JavaStepDefinition>> tokenMaps =
+            new HashMap<Module, TokenMap<JavaStepDefinition>>();
     private final AtomicBoolean needsUpdate = new AtomicBoolean(true);
     private final ChangeListener changeListener = new ChangeListener(this);
 
@@ -72,16 +74,16 @@ public class JavaStepDefinitionsIndex {
     }
 
     @NotNull
-    public TokenMap findAllStepDefinitionsByType(@NotNull ScenarioStep step) {
+    public TokenMap<JavaStepDefinition> findAllStepDefinitionsByType(@NotNull ScenarioStep step) {
         Module module = ModuleUtilCore.findModuleForPsiElement(step);
 
         if (module == null) {
-            return new TokenMap();
+            return new TokenMap<JavaStepDefinition>();
         }
         if (needsUpdate.get()) {
             updated();
         }
-        TokenMap tokenMap = tokenMaps.get(module);
+        TokenMap<JavaStepDefinition> tokenMap = tokenMaps.get(module);
         if (tokenMap == null) {
             tokenMap = loadStepsFor(module);
             tokenMaps.put(module, tokenMap);
@@ -91,19 +93,22 @@ public class JavaStepDefinitionsIndex {
 
     @NotNull
     public Collection<JavaStepDefinition> findStepDefinitions(@NotNull ScenarioStep step) {
-        final TokenMap tokenMap = findAllStepDefinitionsByType(step);
+        final TokenMap<JavaStepDefinition> tokenMap = findAllStepDefinitionsByType(step);
         return getJavaStepDefinitions(step, tokenMap);
     }
 
     @NotNull
     private static Collection<JavaStepDefinition> getJavaStepDefinitions(@NotNull ScenarioStep step,
-                                                                         @NotNull TokenMap tokenMap) {
+                                                                         @NotNull TokenMap<JavaStepDefinition> tokenMap) {
         if (tokenMap.isEmpty()) return Collections.emptyList();
         final Map<Class, JavaStepDefinition> definitionsByClass = new HashMap<Class, JavaStepDefinition>();
 
-        final String text = step.getAnnotatedStoryLine();
-
-        final List<JavaStepDefinition> stepDefinitions = tokenMap.getConcerned(text, true);
+        String reallyFind = step.getAnnotatedStoryLine();
+        final int rulezzz = reallyFind.indexOf(CompletionUtilCore.DUMMY_IDENTIFIER_TRIMMED);
+        if (rulezzz >= 0) {
+            reallyFind = reallyFind.substring(0, rulezzz);
+        }
+        final List<JavaStepDefinition> stepDefinitions = tokenMap.get(reallyFind, true);
         for (JavaStepDefinition stepDefinition : stepDefinitions) {
             if (stepDefinition != null) {
                 Integer currentHighestPriority =
@@ -140,7 +145,7 @@ public class JavaStepDefinitionsIndex {
     //    }
 
     @NotNull
-    private TokenMap loadStepsFor(@NotNull Module module) {
+    private TokenMap<JavaStepDefinition> loadStepsFor(@NotNull Module module) {
         GlobalSearchScope dependenciesScope = module.getModuleWithDependenciesAndLibrariesScope(true);
 
         PsiClass givenAnnotationClass = findStepAnnotation(Given.class.getName(), module, dependenciesScope);
@@ -148,16 +153,18 @@ public class JavaStepDefinitionsIndex {
         PsiClass thenAnnotationClass = findStepAnnotation(Then.class.getName(), module, dependenciesScope);
 
         if (givenAnnotationClass == null || whenAnnotationClass == null || thenAnnotationClass == null) {
-            return new TokenMap();
+            return new TokenMap<JavaStepDefinition>();
         }
 
-        TokenMap result = new TokenMap();
+        TokenMap<JavaStepDefinition> result = new TokenMap<JavaStepDefinition>();
         List<PsiClass> stepAnnotations = asList(givenAnnotationClass, whenAnnotationClass, thenAnnotationClass);
         for (PsiClass stepAnnotation : stepAnnotations) {
             Collection<PsiAnnotation> allStepAnnotations = getAllStepAnnotations(stepAnnotation, dependenciesScope);
 
             for (PsiAnnotation stepDefAnnotation : allStepAnnotations) {
-                result.put(new JavaStepDefinition(stepDefAnnotation));
+                JavaStepDefinition javaStepDefinition = new JavaStepDefinition(stepDefAnnotation);
+                Collection<String> paths = javaStepDefinition.toStrings();
+                result.put(javaStepDefinition, paths);
             }
         }
 
